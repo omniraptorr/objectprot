@@ -1,0 +1,131 @@
+-- print("included bbprot")
+#include bagprot
+
+--followup: replace harcoded createButton() params in menu funcs with ones generated from default config here. or even xml
+button_bagprot = {
+  button_backgroud = "White",
+}
+button_bagprot = bagprot:newProt(button_bagprot)
+
+-- override all the things
+function button_bagprot:startMenu()
+  self().createButton({
+      label="Setup (relative)", click_function="global_start_relative", function_owner=Global,
+      position={0,0.3,-2}, rotation={0,180,0}, height=350, width=1800,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+  self().createButton({
+      label="Setup (absolute)", click_function="global_start_absolute", function_owner=Global,
+      position={0,0.3,-2.8}, rotation={0,180,0}, height=350, width=1800,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+end
+function button_bagprot:actionMenu()
+  self().createButton({
+      label="Place", click_function="global_Place", function_owner=Global,
+      position={0,0.3,-2}, rotation={0,180,0}, height=350, width=800,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+  self().createButton({
+      label="Recall", click_function="global_Recall", function_owner=Global,
+      position={0,0.3,-2.8}, rotation={0,180,0}, height=350, width=800,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+  self().createButton({
+      label="Setup", click_function="global_Setup", function_owner=Global,
+      position={-2,0.3,0}, rotation={0,270,0}, height=350, width=800,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+end
+function button_bagprot:setupMenu()
+  self().createButton({
+      label="Toggle Selected", click_function="global_sendSelected", function_owner=Global,
+      position={0,0.3,-2}, rotation={0,180,0}, height=350, width=1700,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+  self().createButton({
+      label="Cancel", click_function="global_Cancel", function_owner=Global,
+      position={0,0.3,-2.8}, rotation={0,180,0}, height=350, width=1700,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+  self().createButton({
+      label="Submit", click_function="global_Submit", function_owner=Global,
+      position={0,0.3,-3.6}, rotation={0,180,0}, height=350, width=1700,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+
+  -- self:makeMenu("")
+  -- self:makeMenu("Reset")
+  -- self:makeMenu("")
+  self().createButton({
+      label="Reset", click_function="global_Reset", function_owner=Global,
+      position={2,0.3,0}, rotation={0,90,0}, height=350, width=800,
+      font_size=250, color={0,0,0}, font_color={1,1,1}
+  })
+end
+-- global shit goes below this line
+
+
+function quickadd_button_bag(player, obj) -- this hotkey function converts a dumb bag into a memory bag (with 3d buttons), and stores player's currently selected objects in itself.
+  if not validate_quickadd(player, obj) then return end
+  local newcode =
+  [[
+  function onLoad()
+    Global.call
+    (
+      "newFromGlobalCall",
+      {
+        prot = "button_bagprot",
+        obj = self,
+        params = table.pack("bagList") -- name of destination table
+      }
+    ) -- this will create an entry of self in global table bagList
+  end
+  ]]
+  obj.script_code = newcode
+  obj.script_state = ""
+  obj.call("onLoad")
+  local bag = bagList[obj.guid]
+  bag:sendSelected(player)
+  bag:Submit(player)
+  bag:Recall(player)
+end
+addHotkey("quick add button bag", quickadd_button_bag)
+
+-- followup: how does scope work for these again? the local bag should be discarded when quickadd goes out of scope, but the buttons keep working. someone please explain
+
+function global_start_relative(obj)
+  local bag = bagList[obj.guid]
+  bag.isRelative = true
+  bag:Setup()
+end
+function global_start_absolute(obj)
+  local bag = bagList[obj.guid]
+  bag.isRelative = false
+  bag:Setup()
+end
+
+function global_Setup(obj)
+  bagList[obj.guid]:Setup(player)
+end
+function global_sendSelected(obj, player)
+  bagList[obj.guid]:sendSelected(player)
+end
+function global_Cancel(obj, player)
+  bagList[obj.guid]:Cancel(player)
+end
+function global_Submit(obj, player)
+  bagList[obj.guid]:Submit(player)
+end
+function global_Reset(obj, player)
+  bagList[obj.guid]:Reset(player)
+end
+
+
+
+function global_Place(obj, player)
+  bagList[obj.guid]:Place(player)
+end
+function global_Recall(obj, player)
+  bagList[obj.guid]:Recall(player)
+end

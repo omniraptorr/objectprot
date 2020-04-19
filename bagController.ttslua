@@ -1,0 +1,345 @@
+--Utility functions
+do
+  function deepcopy(orig)
+    local orig_type = type(orig)
+    local copy
+    if orig_type == 'table' then
+        copy = {}
+        for orig_key, orig_value in next, orig, nil do
+            copy[deepcopy(orig_key)] = deepcopy(orig_value)
+        end
+        setmetatable(copy, deepcopy(getmetatable(orig)))
+    else -- number, string, boolean, etc
+        copy = orig
+    end
+    return copy
+  end
+
+  --Round number (num) to the Nth decimal (dec)
+  function round(num, dec)
+    local mult = 10^(dec or 0)
+    return math.floor(num * mult + 0.5) / mult
+  end
+end
+
+require("lib/objectprot/objectController")
+bagprot = { -- reference with default configuration values
+  blinkColor = "Red",
+  selfHighlightColor = "Blue",
+  blinkDuration = 0.5,
+  isRelative = false,
+  smoothTake = true, -- objects resting on top of each other sometimes clip through each other when taken from the bag smoothly. override it if you run into that issue.
+  printMessages = true,
+}
+bagprot = objectprot:newProt(bagprot)
+function bagprot:playerPrint(str)
+  if self.printMessages then
+    objectprot:playerPrint(str)
+  end
+end
+
+function bagprot:init()
+  -- objectprot:init(obj) -- parent's init can be called directly. yay for inheritance. not needed here however, it's just for show.
+  local realBag = self()
+
+  self.memoryList = {}
+
+  if realBag.script_state.len() > 6 then
+    self:actionMode()
+  else
+    self:startMode()
+  end
+
+  return self
+end
+
+-- reference of self.memoryList entry structure: self.memoryList[guid] = {pos = Vector3 , rot = Vector3, lock = boolean} -- lock seems optional #fol
+function bagprot:readMemory() -- only reads save if memoryList doesn't exist yet.
+  if next(self.memoryList) == nil then -- or not next(self.memoryList) then
+    self.memoryList = self:readSave()
+  end
+end
+--Beginning Setup
+
+addtobottom(deck, card)
+-- called when bag is empty, creates absolute/relative picker buttons
+function bagprot:startMode()
+  self().clearButtons()
+  self().clearContextMenu()
+  self().highlightOff()
+  self:startMenu()
+end
+function bagprot:startMenu() -- ui has its own function for easier overriding
+    local function setup_r(player)
+      self.isRelative = true
+      self:playerPrint("Using relative coords")
+      self:Setup()
+    end
+
+    local function setup_a(player)
+      self.isRelative = false
+      self:playerPrint("Using absolute coords")
+      self:Setup()
+    end
+
+    self().addContextMenuItem("Setup (relative)", setup_r, false)
+    self().addContextMenuItem("Setup (absolute)", setup_a, false)
+  end
+
+  --Creates recall and place buttons
+function bagprot:actionMode()
+  self().clearButtons()
+  self().clearContextMenu()
+  self().highlightOff()
+  self:actionMenu()
+end
+function bagprot:actionMenu()
+  self:makeContextMenu("Place")
+  self:makeContextMenu("Recall")
+  self:makeContextMenu("Setup")
+end
+
+--Triggered by setup button
+function bagprot:Setup(player)
+  self:readMemory()
+  Player[player].clearSelectedObjects()
+  for guid, _ in pairs(self.memoryList) do
+    local obj = getObjectFromGUID(guid)
+    if obj ~= nil then
+      obj.addToPlayerSelection(player)
+      Player[player].pingTable(obj.getPosition()) -- maybe a bit too loud lol, consider highligting instead?
+      -- obj.highlightOn(blinkColor, blinkDuration)
+    end
+  end
+  self().highlightOn(self.selfHighlightColor)
+  self().clearButtons()
+  self().clearContextMenu()
+  self:setupMenu()
+end
+function bagprot:setupMenu()
+  -- self().createButton({
+  --     label="Toggle Selected", click_function="global_sendSelected", function_owner=Global,
+  --     position={0,0.3,-2}, rotation={0,180,0}, height=350, width=1700,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+  -- self().createButton({
+  --     label="Cancel", click_function="global_Cancel", function_owner=Global,
+  --     position={0,0.3,-2.8}, rotation={0,180,0}, height=350, width=1700,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+  -- self().createButton({
+  --     label="Submit", click_function="global_Submit", function_owner=Global,
+  --     position={0,0.3,-3.6}, rotation={0,180,0}, height=350, width=1700,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+  -- self.createButton({
+  --     label="Reset", click_function="global_Reset", function_owner=Global,
+  --     position={-2,0.3,0}, rotation={0,270,0}, height=350, width=800,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+
+  -- self:makeContextMenu("sendSelected") -- this doesn't work, TTS selection interface resets on right click :( we use a hotkey instead
+  self:makeContextMenu("Cancel")
+  self:makeContextMenu("Submit")
+  self:makeContextMenu("")
+  self:makeContextMenu("Reset")
+  self:makeContextMenu("")
+end
+-- in Setup Mode
+
+
+function bagprot:sendSelected(player) -- this is a global function because it needs to attach to a createButton()
+  self:readMemory() -- this allows sending outside of setup mode. followup: idk if this is good from a ui perspective
+
+  local selectedObjects = Player[player].getSelectedObjects()
+  if next(selectedObjects) == nil then
+    self:playerPrint("Nothing Selected", player)
+    return
+  end
+
+  local realBag = self()
+
+  for k,obj in ipairs(selectedObjects) do
+    local objGUID = obj.getGUID()
+
+    -- print(logString(self.memoryList))
+    if self.memoryList[objGUID] == nil and objGUID ~= self.guid then -- we avoid selecting ourselves because for some insane reason the tts api allows you to putobject() containers into themselves, which makes the bag disappear. no bueno
+        --Adding pos/rot to memory table
+        local pos,rot
+        if self.isRelative then
+          pos = realBag.positionToLocal(obj.getPosition())
+          rot = obj.getRotation() - realBag.getRotation()
+        else
+          pos = obj.getPosition()
+          rot = obj.getRotation()
+        end
+
+        --I need to add it like this or it won't save due to indexing issue
+        self.memoryList[objGUID] = {
+            pos={x=round(pos.x,4), y=round(pos.y,4), z=round(pos.z,4)},
+            rot={x=round(rot.x,4), y=round(rot.y,4), z=round(rot.z,4)},
+            -- lock=obj.getLock() or nil,
+        }
+    else
+        self:removeBlinker(objGUID)
+        self.memoryList[objGUID] = nil
+    end
+  end
+end
+
+--Cancels selection process
+function bagprot:Cancel(player)
+  self:removeAllBlinkers()
+  if self.mlBackup then
+    self.memoryList = self.mlBackup
+    self.mlBackup = nil
+  end
+  self:playerPrint("Selection Cancelled", player)
+  if next(self.memoryList) == nil then
+    self:startMode()
+  else
+    self:actionMode()
+  end
+end
+
+--Saves selections
+function bagprot:Submit(player)
+    if next(self.memoryList) == nil then
+        printToColor("You cannot submit without any objects recorded", player)
+    else
+        self:writeSave(self.memoryList)
+        self:playerPrint("Saved " .. #self.memoryList .. " objects", player)
+        self:actionMode()
+    end
+end
+
+--Resets bag to starting status
+function bagprot:Reset(player)
+    self.memoryList = nil
+    self:writeSave(nil)
+    self:playerPrint("Tool has been reset", player)
+    self:startMode()
+end
+-- in Action Mode
+
+--Sends objects from bag/table to their saved position/rotation
+function bagprot:Place()
+  self:readMemory()
+  local realBag = self()
+
+  local bagObjList = {}
+  for k,v in realBag.getObjects() do
+    bagObjList[v.guid] = true -- build a set of all guids in the bag
+  end
+
+  local selfPos = realBag.getPosition()
+  local smooth = self.smoothTake
+
+  for guid, entry in pairs(self.memoryList) do
+    local obj = getObjectFromGUID(guid)
+    local objpos = entry.pos
+    local objrot = entry.rot
+    if self.isRelative then
+      objpos = realBag.positionToWorld(entry.pos)
+      objrot = Vector(entry.rot) + realBag.getRotation()
+    end
+    --If obj is out on the table, move it to the saved pos/rot
+    if obj ~= nil then
+      obj.setPositionSmooth(objpos, false, true)
+      obj.setRotationSmooth(objrot, false, true)
+      obj.setLock(entry.lock or false)
+    else
+      --If obj is inside of the bag
+      local found = false
+      if bagObjList[guid] then
+        local item = realBag.takeObject({guid = guid, position = objpos, rotation = objrot, smooth = smooth})
+        -- item.setLock(entry.lock or false)
+        found = true
+        break
+      end
+      if not found then
+        self:playerPrint("Object not found! its guid was " .. guid)
+      end
+    end
+  end
+  self:playerPrint("Objects placed", player)
+end
+
+--Recalls objects to bag from table
+function bagprot:Recall(player)
+  local realBag = self()
+  self:readMemory()
+  for guid, entry in pairs(self.memoryList) do
+      local obj = getObjectFromGUID(guid)
+      if obj ~= nil then
+        local pos = obj.getPosition()
+        pos.y = pos.y + 1.5
+        obj.setPositionSmooth(pos, false, true)
+        Wait.condition(function() realBag.putObject(obj) end, function() return not obj.isSmoothMoving() end)
+      end
+  end
+  self:playerPrint("Objects recalled", player)
+end
+
+-- global shit
+
+bagList = {} -- all bags are stored here, indexed by guid
+
+function global_sendSelected(player, obj)
+  bagList[obj.guid]:sendSelected(player)
+end
+addHotkey("Toggle selected (on hovered bag)", global_sendSelected)
+
+-- function validate_quickadd(player, obj)
+--   if not obj then
+--     return false
+--   end
+--   if next(Player[player].getSelectedObjects()) == nil then
+--     printToColor("please select objects before quickadding", player)
+--     return false
+--   end
+--   if bagList[obj.guid] then
+--     error("instance with this guid is already in the global list!")
+--     return false
+--   end
+--   if obj.getQuantity() == -1 then
+--     printToColor("object " .. obj.guid .. " is not a container", player)
+--     return false
+--   end
+--   return true
+-- end
+
+-- followup: how does scope work for these again? the local bag should be discarded when quickadd goes out of scope, but the buttons keep working. someone please explain
+-- function quickadd_bag(player, obj) -- this hotkey function converts a dumb bag into a memory bag, and stores player's currently selected objects in itself.
+--   -- if not validate_quickadd(player, obj) then return end
+--
+--   bagList[obj.guid] = nil
+--
+--   local newcode =
+--   [[
+--   function onLoad()
+--     Global.call
+--     (
+--       "newFromGlobalCall",
+--       {
+--         prot = "bagprot",
+--         obj = self.guid,
+--         params = table.pack("bagList") -- name of destination table. but of course it could be another data structure.
+--       }
+--     ) -- this will create an entry of self in global table bagList
+--   end
+--   ]]
+--   obj.script_code = ""
+--   obj.script_code = newcode
+--   obj.script_state = ""
+--   print("calling")
+--   obj.call("onLoad")
+--   local bag = bagList[obj.guid]
+--   -- print(logString(bag))
+--   -- bag.selfHighlightColor = "Purple" -- here you can set any config options for your new bag
+--   bag:sendSelected(player)
+--   bag:Submit(player)
+--   bag:Recall(player)
+--   print(logString(bag.memoryList))
+-- end
+-- addHotkey("quick convert bag", quickadd_bag) -- fuk u, do this through onLoad() instead
