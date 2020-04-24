@@ -135,7 +135,7 @@ function bagprot:Setup(player)
 
   self().clearButtons()
   self().clearContextMenu()
-  self:setupMenu(outsideObjects)
+  self:setupMenu(outsideObjects, missingObjects)
 end
 function bagprot:setupMenu(outsideObjects, missingObjects)
   -- self().createButton({
