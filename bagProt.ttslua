@@ -202,11 +202,11 @@ function bagprot:recordObject(obj)
 end
 
 -- in Setup Mode
-function bagprot:sendSelected(player) -- this is a global function because it needs to attach to a createButton()
+function bagprot:sendSelected(player, realBag) -- this is a global function because it needs to attach to a createButton()
   local outsideObjects = self:getOutsideObjects() -- we call this again because shit could have changed since we last called it during self:Setup(). as a reminder, it returns the set of externally existing tracked objects
   local newObjects = {} -- set of objects that are not yet tracked to be added to self.memoryList
 
-  self().removeFromPlayerSelection(player) -- we avoid selecting ourselves because for some insane reason the tts api allows you to putobject() bags into themselves, which makes the bag disappear. lol
+  realBag.removeFromPlayerSelection(player) -- we avoid selecting ourselves because for some insane reason the tts api allows you to putobject() bags into themselves, which makes the bag disappear. lol
 
   for i, obj in ipairs(Player[player].getSelectedObjects()) do
     local objGUID = obj.getGUID()
@@ -229,17 +229,19 @@ function bagprot:sendSelected(player) -- this is a global function because it ne
     obj.highlightOn({1,0,0}, self.blinkDuration)
   end
 
-  local changed = false
-  if next(newObjects) then
-    changed = true
-    self:playerPrint("Saved " .. #newObjects .. " new object" .. (#newObjects > 1 and "s" or ""), player)
-  end
-  if next(removedObjects) then
-    changed = true
-    self:playerPrint("Removed " .. #removedObjects .. " objects" .. (#newObjects > 1 and "s" or ""), player)
-  end
-  if not changed then
-    self:playerPrint("No changes to record!", player)
+  do
+    local changed = false
+    if next(newObjects) then
+      changed = true
+      self:playerPrint("Saved " .. #newObjects .. " new object" .. (#newObjects > 1 and "s" or ""), player)
+    end
+    if next(removedObjects) then
+      changed = true
+      self:playerPrint("Removed " .. #removedObjects .. " objects" .. (#newObjects > 1 and "s" or ""), player)
+    end
+    if not changed then
+      self:playerPrint("No changes to record!", player)
+    end
   end
 
   return newObjects, removedObjects
@@ -266,7 +268,7 @@ function bagprot:blinkAll(player) -- blinks self and all outside objects with pl
   end
 
   -- do return end
-  local objs = self:getOutsideObjects() -- i don't want a new local var here
+  local objs = self:getOutsideObjects()
   for _,obj in pairs(objs) do
     blinkIfAble(obj) -- t0
     Wait.time(function() blinkIfAble(obj) end, duration * 2) -- t2
@@ -366,22 +368,12 @@ function bagprot:Recall(player) -- Recalls objects to bag from table
   self:playerPrint("Objects recalled", player)
 end
 
-local function global_sendSelected(player, obj) -- side effects u_u
+local function global_sendSelected(player, obj) -- followup: add a wrapper to manage hotkeys
   local instance = instanceList["MemoryBag"][obj.guid]
-  if instance then instance:sendSelected(player) end
+  if instance then instance:sendSelected(player, obj) end
 end
-addHotkey("Send selected objects (on hovered MemoryBag)", global_sendSelected)
+addHotkey("Send selected to MemoryBag", global_sendSelected)
 -- showHotkeyConfig()
-
-
--- local bag = bagprot:newInstance("4ad7c5")
--- print(logString(bag))
--- -- bag.selfHighlightColor = "Purple" -- here you can set any config options for your new bag
--- bag:sendSelected(player)
--- bag:Submit(player)
--- bag:Recall(player)
--- print(logString(bag.memoryList))
--- addHotkey("quick convert bag", quickadd_bag) -- fuk u, do this through onLoad() instead
 
 do
   deepcopy = function(orig)
