@@ -3,6 +3,7 @@
 
 --followup: replace harcoded createButton() params in menu funcs with ones generated from default config here. or even xml
 button_bagprot = {
+  moduleName = "Button Bag",
   button_backgroud = "White",
 }
 button_bagprot = bagprot:newProt(button_bagprot)
@@ -67,28 +68,7 @@ end
 
 
 function quickadd_button_bag(player, obj) -- this hotkey function converts a dumb bag into a memory bag (with 3d buttons), and stores player's currently selected objects in itself.
-  if not validate_quickadd(player, obj) then return end
-  local newcode =
-  [[
-  function onLoad()
-    Global.call
-    (
-      "newFromGlobalCall",
-      {
-        prot = "button_bagprot",
-        obj = self,
-        params = table.pack("bagList") -- name of destination table
-      }
-    ) -- this will create an entry of self in global table bagList
-  end
-  ]]
-  obj.script_code = newcode
-  obj.script_state = ""
-  obj.call("onLoad")
-  local bag = bagList[obj.guid]
-  bag:sendSelected(player)
-  bag:Submit(player)
-  bag:Recall(player)
+  obj.setGMNotes(button_bagprot.moduleName)
 end
 addHotkey("quick add button bag", quickadd_button_bag)
 
