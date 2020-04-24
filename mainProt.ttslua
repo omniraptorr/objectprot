@@ -92,7 +92,7 @@ function objectprot:makeContextMenu(methodName, closure, keep_open, ...) -- this
   local vargs = ...
   if closure then
     wrappedClosure = function(player, obj)
-      return closure(self, player, obj, vargs) -- if the closure only needs vargs, it has to be called as closure(_,_,_, vargs) which is kinda ugly
+      return closure(self, player, obj, vargs) -- if the closure only needs vargs, it has to be called as closure(_,_,_, vargs) which is kinda ugly. but maybe those can just be passed in as upvalues?
     end
   else
     wrappedClosure = function(player, obj)

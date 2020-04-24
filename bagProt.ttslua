@@ -28,7 +28,7 @@ function bagprot:init()
   self.memoryList = {}
   local ss = tostring(realBag.script_state)
 
-  if ss ~= nil and ss ~= "" and ss.len() > 6 then -- why 6 exactly? followup
+  if ss ~= nil and ss ~= "" then
     self:actionMode()
   else
     self:startMode()
