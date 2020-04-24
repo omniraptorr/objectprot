@@ -48,7 +48,7 @@ function objectprot:newProt(baseTable, name) -- not sure if i should copy functi
 end
 
 function objectprot:newInstance(initarg, ...) -- initializes a new instance of a class based on target obj and any other arguments. do not call from instance, only from prototype. for reference a prototype must have prot.__index == prot
-  if not rawget(self, self.protName) then
+  if not rawget(self, "protName") then
     log("tried to create an instance, but parent was not a prototype")
     return
   end
@@ -160,7 +160,8 @@ end
 -- GLOBALS GO HERE
 
 local function getObjectProt(obj)
-  return obj.getGMNotes():sub(a:find("^.-\n")) -- prot name is stored in first line of GMNotes.
+  local GMNotes = obj.getGMNotes()
+  return GMNotes:sub(GMNotes:find("^.-\n")) -- prot name is stored in first line of GMNotes.
 end
 
 local function initObject(obj) -- call the constructor and bind to an object

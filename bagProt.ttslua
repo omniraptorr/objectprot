@@ -64,8 +64,6 @@ function bagprot:getOutsideObjects() -- checks which of memoryList's objects we 
   for _,entry in ipairs(self().getObjects()) do -- account for all objects inside self, leaving only outside and missing.
     trackedObjects[entry.guid] = nil
   end
-  -- log("inoo")
-  -- log(trackedObjects)
 
   for guid,_ in pairs(trackedObjects) do -- account for all objects outside on the table
     local obj = getObjectFromGUID(guid)
@@ -75,17 +73,14 @@ function bagprot:getOutsideObjects() -- checks which of memoryList's objects we 
       missingObjectsArray[#missingObjectsArray + 1] = guid
     else
       trackedObjects[guid] = obj
-      -- Player.White.pingTable(trackedObjects[guid].getPosition()) -- morning followup
     end
   end
 
   if next(missingObjectsArray) then -- still objects unaccounted for
     self:playerPrint("Lost track of some objects! Here they are in a lua table:\n{\n  \"" .. table.concat(missingObjectsArray, "\",\n  \"") .. "\"\n}")
   end
-  log("inooa")
-  log(trackedObjects)
   -- remember that trackedObjects points to direct object refs but missingObjects is just guids
-  return trackedObjects -- , missingObjects
+  return trackedObjects, missingObjects
 end
 
 -- called when bag first loads:
@@ -128,7 +123,7 @@ function bagprot:Setup(player)
   self.mlBackup = deepcopy(self.memoryList)
   Player[player].clearSelectedObjects()
 
-  local outsideObjects = self:getOutsideObjects() -- dam this function is expensive, i don't want to call it twice in one setup phase. followup: optimize and cache the result of it somehow so it's acessible again in self:Submit()
+  local outsideObjects, missingObjects = self:getOutsideObjects() -- dam this function is expensive, i don't want to call it twice in one setup phase.
 
   for guid,obj in pairs(outsideObjects) do
     obj.addToPlayerSelection(player)
@@ -142,7 +137,7 @@ function bagprot:Setup(player)
   self().clearContextMenu()
   self:setupMenu(outsideObjects)
 end
-function bagprot:setupMenu(outsideObjects)
+function bagprot:setupMenu(outsideObjects, missingObjects)
   -- self().createButton({
   --     label="Toggle Selected", click_function="global_sendSelected", function_owner=Global,
   --     position={0,0.3,-2}, rotation={0,180,0}, height=350, width=1700,
@@ -168,9 +163,19 @@ function bagprot:setupMenu(outsideObjects)
   if next(self.memoryList) then
     self:makeContextMenu("Re-Select Objects", self.Setup)
   end
-  self:makeContextMenu("Cancel")
-  self:makeContextMenu("Submit", self.Submit, false, outsideObjects) -- don't trust outsideObjects, check inside self:Submit() that everything stil exists out there
   -- followup: also this doesn't handle a tracked object leaving a container during setup. maybe above my paygrade.
+  self:makeContextMenu("Cancel")
+  self:makeContextMenu("Submit")
+
+  if next(missingObjects) then
+    local function forgetMissing()
+      for guid, _ in pairs(missingObjects) do
+        self.memoryList[guid] = nil
+      end
+    end
+    self().makeContextMenu("Forget Missing Objects", forgetMissing)
+  end
+
   self:makeContextMenu("")
   self:makeContextMenu("Reset")
   self:makeContextMenu("")
@@ -245,8 +250,9 @@ local function blinkIfAble(obj, color, duration)
 end
 
 function bagprot:blinkAll(player) -- blinks self and all outside objects with player color
-  self().removeFromPlayerSelection(player)
-  self().highlightOff()
+  local realBag = self()
+  realBag.removeFromPlayerSelection(player)
+  realBag.highlightOff()
   local duration = self.blinkDuration
   local player = player
 
@@ -256,11 +262,11 @@ function bagprot:blinkAll(player) -- blinks self and all outside objects with pl
     end
   end
   local function blinkSelf()
-    blinkIfAble(self())
+    blinkIfAble(realBag)
   end
 
   -- do return end
-  local objs = self:getOutsideObjects()
+  local objs = self:getOutsideObjects() -- i don't want a new local var here
   for _,obj in pairs(objs) do
     blinkIfAble(obj) -- t0
     Wait.time(function() blinkIfAble(obj) end, duration * 2) -- t2
@@ -290,17 +296,14 @@ function bagprot:Submit(player) -- Saves selections with writeSave
   if next(self.memoryList) == nil then
       printToColor("You cannot submit without any objects recorded", player)
   else
-    -- self().highlightOn(player, self.blinkDuration)
     local count = 0
     for guid, entry in pairs(self.memoryList) do
       count = count + 1
-      -- getObjectFromGUID(guid).highlightOn(player, self.blinkDuration)
     end
     self:blinkAll(player)
     self:writeSave(self.memoryList)
     self:playerPrint("Recorded " .. count .. " objects", player)
     self:actionMode()
-    log("submitting")
   end
 end
 
