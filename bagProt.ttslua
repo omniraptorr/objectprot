@@ -1,0 +1,406 @@
+-- urgent followup: this bag does not guard against duplicate guids! if you copy/paste shit into it repeatedly it will break!
+
+--forward declarations for utility functions (defined at the end)
+local deepcopy, round
+
+local protTable = require("lib/objectprot/mainProt") -- this call to require() also sets a couple global functions. followup on if this is a good pattern
+local objectprot = protTable.mainProt
+-- local protList = protTable.protList
+local instanceList = protTable.instanceList -- remember, each instance is in instanceList[protName][instance.guid]
+
+
+local bagprot = { -- reference bag prot with default configuration values
+  protName =  "MemoryBag",
+
+  blinkColor = "Red",
+  selfHighlightColor = "Blue",
+  blinkDuration = 0.5,
+  isRelative = false,
+  smoothTake = true, -- objects resting on top of each other sometimes clip through each other when taken from the bag smoothly. override it if you run into that issue.
+  printMessages = true,
+}
+bagprot = objectprot:newProt(bagprot) -- bind to parent
+
+function bagprot:init()
+  -- objectprot:init(obj) -- parent's init can be called directly. yay for inheritance. not needed here however, it's just for show.
+  local realBag = self() -- todo: remove all realBag type vars after adding binser for proper serialization
+
+  self.memoryList = {}
+  local ss = tostring(realBag.script_state)
+
+  if ss ~= nil and ss ~= "" and ss.len() > 6 then -- why 6 exactly? followup
+    self:actionMode()
+  else
+    self:startMode()
+  end
+
+  return self
+end
+function bagprot:playerPrint(str) -- overrides parent function to add a check.
+  if self.printMessages then
+    objectprot:playerPrint(str)
+  end
+end
+
+-- reference of self.memoryList entry structure: self.memoryList[guid] = {pos = Vector3 , rot = Vector3}
+function bagprot:readMemory() -- only reads save if memoryList is still empty.
+  if not self.memoryList or next(self.memoryList) == nil then -- or not next(self.memoryList) then
+    self.memoryList = self:readSave()
+  end
+end
+
+-- this function is sort of expensive, it loops over self.memoryList, self.getObjects, and then trackedObjects
+function bagprot:getOutsideObjects() -- checks which of memoryList's objects we can "see" and returns what we can and can't
+  self:readMemory()
+  -- objects can be inside self, out on the table, or missing (neither inside or outside, e.g. in another bag).
+  local trackedObjects = {} -- set of objects on the table
+  local missingObjects = {} -- set of for missing objects
+  local missingObjectsArray = {} -- array for concatting
+
+  for guid, entry in pairs(self.memoryList) do -- first make a shallowcopy of all self.memoryList
+    trackedObjects[guid] = true
+  end
+
+  for _,entry in ipairs(self().getObjects()) do -- account for all objects inside self, leaving only outside and missing.
+    trackedObjects[entry.guid] = nil
+  end
+  -- log("inoo")
+  -- log(trackedObjects)
+
+  for guid,_ in pairs(trackedObjects) do -- account for all objects outside on the table
+    local obj = getObjectFromGUID(guid)
+    if obj == nil then
+      trackedObjects[guid] = nil
+      missingObjects[guid] = true
+      missingObjectsArray[#missingObjectsArray + 1] = guid
+    else
+      trackedObjects[guid] = obj
+      -- Player.White.pingTable(trackedObjects[guid].getPosition()) -- morning followup
+    end
+  end
+
+  if next(missingObjectsArray) then -- still objects unaccounted for
+    self:playerPrint("Lost track of some objects! Here they are in a lua table:\n{\n  \"" .. table.concat(missingObjectsArray, "\",\n  \"") .. "\"\n}")
+  end
+  log("inooa")
+  log(trackedObjects)
+  -- remember that trackedObjects points to direct object refs but missingObjects is just guids
+  return trackedObjects -- , missingObjects
+end
+
+-- called when bag first loads:
+function bagprot:startMode() -- called when bag is empty, creates absolute/relative picker buttons
+  self().clearButtons()
+  self().clearContextMenu()
+  self().highlightOff()
+  self:startMenu()
+end
+function bagprot:startMenu() -- ui creation is separated its own function for easier overriding
+  function setup_r(player)
+    self.isRelative = true
+    self:playerPrint("Using relative coords")
+    self:Setup(player)
+  end
+  function setup_a(player)
+    self.isRelative = false
+    self:playerPrint("Using absolute coords")
+    self:Setup(player)
+  end
+
+  self().addContextMenuItem("Setup (relative)", setup_r)
+  self().addContextMenuItem("Setup (absolute)", setup_a)
+end
+
+function bagprot:actionMode() -- creates recall and place buttons
+  self().clearButtons()
+  self().clearContextMenu()
+  self().highlightOff()
+  self:actionMenu()
+end
+function bagprot:actionMenu()
+  self:makeContextMenu("Place")
+  self:makeContextMenu("Recall")
+  self:makeContextMenu("Setup")
+end
+
+-- the "Setup" button:
+function bagprot:Setup(player)
+  self.mlBackup = deepcopy(self.memoryList)
+  Player[player].clearSelectedObjects()
+
+  local outsideObjects = self:getOutsideObjects() -- dam this function is expensive, i don't want to call it twice in one setup phase. followup: optimize and cache the result of it somehow so it's acessible again in self:Submit()
+
+  for guid,obj in pairs(outsideObjects) do
+    obj.addToPlayerSelection(player)
+    -- Player[player].pingTable(obj.getPosition()) -- followup: pinging may be a bit too loud lol, consider highligting instead?
+    -- obj.highlightOn(blinkColor, blinkDuration)
+  end
+
+  self().highlightOn(self.selfHighlightColor)
+
+  self().clearButtons()
+  self().clearContextMenu()
+  self:setupMenu(outsideObjects)
+end
+function bagprot:setupMenu(outsideObjects)
+  -- self().createButton({
+  --     label="Toggle Selected", click_function="global_sendSelected", function_owner=Global,
+  --     position={0,0.3,-2}, rotation={0,180,0}, height=350, width=1700,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+  -- self().createButton({
+  --     label="Cancel", click_function="global_Cancel", function_owner=Global,
+  --     position={0,0.3,-2.8}, rotation={0,180,0}, height=350, width=1700,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+  -- self().createButton({
+  --     label="Submit", click_function="global_Submit", function_owner=Global,
+  --     position={0,0.3,-3.6}, rotation={0,180,0}, height=350, width=1700,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+  -- self.createButton({
+  --     label="Reset", click_function="global_Reset", function_owner=Global,
+  --     position={-2,0.3,0}, rotation={0,270,0}, height=350, width=800,
+  --     font_size=250, color={0,0,0}, font_color={1,1,1}
+  -- })
+
+  -- self:makeContextMenu("sendSelected") -- this doesn't work, TTS selection interface resets on right click :( so we use a hotkey instead
+  if next(self.memoryList) then
+    self:makeContextMenu("Re-Select Objects", self.Setup)
+  end
+  self:makeContextMenu("Cancel")
+  self:makeContextMenu("Submit", self.Submit, false, outsideObjects) -- don't trust outsideObjects, check inside self:Submit() that everything stil exists out there
+  -- followup: also this doesn't handle a tracked object leaving a container during setup. maybe above my paygrade.
+  self:makeContextMenu("")
+  self:makeContextMenu("Reset")
+  self:makeContextMenu("")
+end
+
+-- you can override/extend this to also record other fields e.g. name/description, lock status, color tint, variables from memory, etc.
+function bagprot:recordObject(obj)
+  local realBag = self()
+  local pos,rot
+  if self.isRelative then
+    pos = realBag.positionToLocal(obj.getPosition())
+    rot = obj.getRotation() - realBag.getRotation()
+  else
+    pos = obj.getPosition()
+    rot = obj.getRotation()
+  end
+
+  --I need to add it like this or it won't save due to indexing issue
+  local entry = {
+    pos={x=round(pos.x,4), y=round(pos.y,4), z=round(pos.z,4)},
+    rot={x=round(rot.x,4), y=round(rot.y,4), z=round(rot.z,4)},
+  }
+  return entry
+end
+
+-- in Setup Mode
+function bagprot:sendSelected(player) -- this is a global function because it needs to attach to a createButton()
+  local outsideObjects = self:getOutsideObjects() -- we call this again because shit could have changed since we last called it during self:Setup(). as a reminder, it returns the set of externally existing tracked objects
+  local newObjects = {} -- set of objects that are not yet tracked to be added to self.memoryList
+
+  self().removeFromPlayerSelection(player) -- we avoid selecting ourselves because for some insane reason the tts api allows you to putobject() bags into themselves, which makes the bag disappear. lol
+
+  for i, obj in ipairs(Player[player].getSelectedObjects()) do
+    local objGUID = obj.getGUID()
+
+    self.memoryList[objGUID] = self:recordObject(obj) -- add/update selected obj in the memory list.
+
+    if outsideObjects[objGUID] then
+      outsideObjects[objGUID] = nil -- if it's already tracked, we don't care about it after updating its entry.
+    else
+      newObjects[#newObjects + 1] = obj -- if it's not tracked yet, add it to new object set
+      obj.highlightOn({0,1,0}, self.blinkDuration)
+    end
+  end
+
+  local removedObjects = {}
+
+  for guid, obj in pairs(outsideObjects) do -- now we go through everything that was previously tracked but wasn't selected and remove it.
+    self.memoryList[guid] = nil
+    removedObjects[#removedObjects + 1] = obj
+    obj.highlightOn({1,0,0}, self.blinkDuration)
+  end
+
+  local changed = false
+  if next(newObjects) then
+    changed = true
+    self:playerPrint("Saved " .. #newObjects .. " new object" .. (#newObjects > 1 and "s" or ""), player)
+  end
+  if next(removedObjects) then
+    changed = true
+    self:playerPrint("Removed " .. #removedObjects .. " objects" .. (#newObjects > 1 and "s" or ""), player)
+  end
+  if not changed then
+    self:playerPrint("No changes to record!", player)
+  end
+
+  return newObjects, removedObjects
+end
+
+local function blinkIfAble(obj, color, duration)
+  return obj ~= nil and obj.highlightOn(color, duration)
+end
+
+function bagprot:blinkAll(player) -- blinks self and all outside objects with player color
+  self().removeFromPlayerSelection(player)
+  self().highlightOff()
+  local duration = self.blinkDuration
+  local player = player
+
+  local function blinkIfAble(obj)
+    if obj ~= nil then
+       obj.highlightOn(player, duration) -- yay upvalues
+    end
+  end
+  local function blinkSelf()
+    blinkIfAble(self())
+  end
+
+  -- do return end
+  local objs = self:getOutsideObjects()
+  for _,obj in pairs(objs) do
+    blinkIfAble(obj) -- t0
+    Wait.time(function() blinkIfAble(obj) end, duration * 2) -- t2
+    Wait.time(function() blinkIfAble(obj) end, duration * 4) -- t4
+  end
+
+  Wait.time(blinkSelf, duration) -- t1
+  Wait.time(blinkSelf, duration * 3) -- t3
+end
+
+function bagprot:Cancel(player) -- Cancels selection process
+  if self.mlBackup then
+    self.memoryList = self.mlBackup
+    self.mlBackup = nil
+  end
+  self:blinkAll(player)
+  do return end
+  self:playerPrint("Selection Cancelled", player)
+  if next(self.memoryList) then
+    self:actionMode()
+  else
+    self:startMode()
+  end
+end
+
+function bagprot:Submit(player) -- Saves selections with writeSave
+  if next(self.memoryList) == nil then
+      printToColor("You cannot submit without any objects recorded", player)
+  else
+    -- self().highlightOn(player, self.blinkDuration)
+    local count = 0
+    for guid, entry in pairs(self.memoryList) do
+      count = count + 1
+      -- getObjectFromGUID(guid).highlightOn(player, self.blinkDuration)
+    end
+    self:blinkAll(player)
+    self:writeSave(self.memoryList)
+    self:playerPrint("Recorded " .. count .. " objects", player)
+    self:actionMode()
+    log("submitting")
+  end
+end
+
+function bagprot:Reset(player) -- Resets bag to starting status
+    self.memoryList = nil
+    self:writeSave(nil)
+    self:playerPrint("Tool has been reset", player)
+    self:startMode()
+end
+
+-- in Action Mode:
+function bagprot:Place() -- Sends objects from bag/table to their saved position/rotation
+  local realBag = self()
+  self:readMemory()
+
+  local bagObjList = {}
+  for k,v in ipairs(realBag.getObjects()) do
+    bagObjList[v.guid] = true -- build a set of all guids in the bag
+  end
+
+  local selfPos = realBag.getPosition()
+  local smooth = self.smoothTake
+
+  for guid, entry in pairs(self.memoryList) do
+    local obj = getObjectFromGUID(guid)
+    local objpos, objrot
+    if self.isRelative then
+      objpos = realBag.positionToWorld(entry.pos)
+      objrot = Vector(entry.rot) + realBag.getRotation()
+    else
+      objpos = entry.pos
+      objrot = entry.rot
+    end
+    if bagObjList[guid] then --If obj is inside of the bag, take it out
+      realBag.takeObject({guid = guid, position = objpos, rotation = objrot, smooth = smooth})
+    else
+      if obj ~= nil then --If obj is out on the table, move it
+        obj.setPositionSmooth(objpos, false, true)
+        obj.setRotationSmooth(objrot, false, true)
+      else
+        self:playerPrint("Object not found on the table or in the bag! its guid was " .. guid)
+      end
+    end
+  end
+  self:playerPrint("Objects placed", player)
+end
+
+function bagprot:Recall(player) -- Recalls objects to bag from table
+  local realBag = self()
+  self:readMemory()
+  for guid, entry in pairs(self.memoryList) do
+      local obj = getObjectFromGUID(guid)
+      if obj ~= nil then
+        local pos = obj.getPosition()
+        pos.y = pos.y + 1.5
+        obj.setPositionSmooth(pos, false, true)
+        Wait.condition(function() realBag.putObject(obj) end, function() return not obj.isSmoothMoving() end)
+      end
+  end
+  self:playerPrint("Objects recalled", player)
+end
+
+local function global_sendSelected(player, obj) -- side effects u_u
+  local instance = instanceList["MemoryBag"][obj.guid]
+  if instance then instance:sendSelected(player) end
+end
+addHotkey("Send selected objects (on hovered MemoryBag)", global_sendSelected)
+-- showHotkeyConfig()
+
+
+-- local bag = bagprot:newInstance("4ad7c5")
+-- print(logString(bag))
+-- -- bag.selfHighlightColor = "Purple" -- here you can set any config options for your new bag
+-- bag:sendSelected(player)
+-- bag:Submit(player)
+-- bag:Recall(player)
+-- print(logString(bag.memoryList))
+-- addHotkey("quick convert bag", quickadd_bag) -- fuk u, do this through onLoad() instead
+
+do
+  deepcopy = function(orig)
+    local orig_type = type(orig)
+    local copy
+    if orig_type == 'table' then
+        copy = {}
+        for orig_key, orig_value in next, orig, nil do
+            copy[deepcopy(orig_key)] = deepcopy(orig_value)
+        end
+        setmetatable(copy, deepcopy(getmetatable(orig)))
+    else -- number, string, boolean, etc
+        copy = orig
+    end
+    return copy
+  end
+
+  --Round number (num) to the Nth decimal (dec)
+  round = function(num, dec)
+    local mult = 10^(dec or 0)
+    return math.floor(num * mult + 0.5) / mult
+  end
+end
+
+return bagprot
