@@ -13,7 +13,6 @@ objectprot.__call = function(sourceTable) -- attempting to call an instance as a
   local obj = getObjectFromGUID(guid) -- followup: once we get binser, we can cache the direct object ref in the instance rather than using getObjectGUID each time
   if obj == nil then
     log("self() object with guid " .. guid .. " does not exist!")
-    -- print("dumping self instance " .. logString(sourceTable))
     -- followup: do we want an option to return a fake object? one that will just eat api function calls without complaining in loud red text
   end
   return obj
@@ -24,7 +23,7 @@ local instanceList = {} -- a table where each element is format instanceList[pro
 
 function objectprot:newProt(baseTable, name) -- not sure if i should copy functions into children but i was told metatable lookups are fast.
 
-  local out = baseTable or {} -- baseTable must not be another prot, just a table with some default values.
+  local out = baseTable or {} -- baseTable should not be another prot, just a table with some default values.
 
   if not out.protName then -- check if there is a name already
     if name then
@@ -53,15 +52,15 @@ function objectprot:newInstance(initarg, ...) -- initializes a new instance of a
     log("tried to create an instance, but parent was not a prototype")
     return
   end
-  local out = setmetatable({}, self) -- remember setmetatable returns its first argument
+  local out = setmetatable({}, self)
   local guid = type(initarg) == "userdata" and initarg.guid or initarg -- initarg is either userdata or a guid string. if it's userdata, get guid, else it should be a string and we can assign directly
   assert(type(guid) == "string", "init argument is not a not valid (userdata or guid), it's a " .. type(initarg))
   out.guid = guid -- every instance needs a guid
   instanceList[self.protName][guid] = out -- basic assignment. should be low overhead but still followup: on if this is the best pattern.
   return out:init(...) -- any additional args are passed on to init
 end
--- this initializes all internal, instance-specific variables. this is run during self:newInstance(). should be overriden/extended in children, but always return self.
-function objectprot:init()
+
+function objectprot:init() -- initializes all internal, instance-specific variables. this is run during self:newInstance(). should be overriden/extended in children, but always return self.
   return self
 end
 
@@ -71,7 +70,7 @@ function objectprot:cleanupInstance() -- deletes the instance. override/extend t
 end
 
 -- functions to read and write script_state. can be overriden/extended ofc
--- followup: use binser or some other format instead of JSON if this turns out to be too slow
+-- followup: use binser or some other format (maybe a FlatBuffer/FlexBuffer?) instead of JSON if this turns out to be too slow
 -- i also considered using getTable instead of decoding script_state but was told they're about equally slow since getTable does a deepcopy.
 function objectprot:readSave()
   local raw = JSON.decode(self().script_state)
@@ -93,7 +92,7 @@ function objectprot:makeContextMenu(methodName, closure, keep_open, ...) -- this
   local vargs = ...
   if closure then
     wrappedClosure = function(player, obj)
-      return closure(self, player, obj, vargs) -- return is rather pointless since context menus don't put the return anywhere, but let's leave it in.
+      return closure(self, player, obj, vargs) -- if the closure only needs vargs, it has to be called as closure(_,_,_, vargs) which is kinda ugly
     end
   else
     wrappedClosure = function(player, obj)
@@ -164,7 +163,7 @@ local function getObjectProt(obj)
   return obj.getGMNotes():sub(a:find("^.-\n")) -- prot name is stored in first line of GMNotes.
 end
 
-local function initController(obj) -- call the constructor and bind to an object
+local function initObject(obj) -- call the constructor and bind to an object
   local controllerProt = protList[getObjectProt(obj)]
   if controllerProt then
     return controllerProt:newInstance(obj)
@@ -173,11 +172,11 @@ end
 
 local function objprot_onLoad() -- called during onLoad()
   for i,obj in ipairs(getAllObjects()) do
-    initController(obj)
+    initObject(obj)
   end
 end
 local function objprot_onObjectSpawn(obj)
-  initController(obj)
+  initObject(obj)
 end
 
 local function objprot_onObjectDestroy(dying_object)
@@ -196,14 +195,12 @@ EventManager.addHandler('onObjectDestroy', objprot_onObjectDestroy)
 EventManager.addHandler('onLoad', objprot_onLoad)
 
 
-local toReturn = {
+return {
   mainProt = objectprot,
   protlist = protList,
   instanceList = instanceList,
   functions = {
     getObjectProt = getObjectProt,
-    initController = initController
+    initObject = initObject
   }
 }
-
-return toReturn
