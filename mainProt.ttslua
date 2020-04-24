@@ -49,6 +49,10 @@ function objectprot:newProt(baseTable, name) -- not sure if i should copy functi
 end
 
 function objectprot:newInstance(initarg, ...) -- initializes a new instance of a class based on target obj and any other arguments. do not call from instance, only from prototype. for reference a prototype must have prot.__index == prot
+  if not rawget(self.protName) then
+    log("tried to create an instance, but parent was not a prototype")
+    return
+  end
   local out = setmetatable({}, self) -- remember setmetatable returns its first argument
   local guid = type(initarg) == "userdata" and initarg.guid or initarg -- initarg is either userdata or a guid string. if it's userdata, get guid, else it should be a string and we can assign directly
   assert(type(guid) == "string", "init argument is not a not valid (userdata or guid), it's a " .. type(initarg))
@@ -61,7 +65,6 @@ function objectprot:init()
   return self
 end
 
-
 function objectprot:cleanupInstance() -- deletes the instance. override/extend this to clean up any other stuff you need
   -- self:resetUI() -- for example you might want to delete ui if it's not pointing to anything anymore
   instanceList[self.protName][self.guid] = nil
@@ -71,7 +74,7 @@ end
 -- followup: use binser or some other format instead of JSON if this turns out to be too slow
 -- i also considered using getTable instead of decoding script_state but was told they're about equally slow since getTable does a deepcopy.
 function objectprot:readSave()
-  local raw = JSON.decode(self().script_state) -- the first six characters of script_state on each object are reserved for its module's guid
+  local raw = JSON.decode(self().script_state)
   return type(raw) == "table" and raw or {} -- falls back to returning an empty table if script_state is not a table (e.g a nil or an empty string) followup: maybe handle non-table retuns in children instead
 end
 function objectprot:writeSave(arg)
@@ -187,6 +190,12 @@ local function objprot_onObjectDestroy(dying_object)
   end
 end
 
+local eventManager = require('ge_tts/EventManager')
+EventManager.addHandler('onObjectSpawn', objprot_onObjectSpawn)
+EventManager.addHandler('onObjectDestroy', objprot_onObjectDestroy)
+EventManager.addHandler('onLoad', objprot_onLoad)
+
+
 local toReturn = {
   mainProt = objectprot,
   protlist = protList,
@@ -196,10 +205,5 @@ local toReturn = {
     initController = initController
   }
 }
-
-local eventManager = require('ge_tts/EventManager')
-EventManager.addHandler('onObjectSpawn', objprot_onObjectSpawn)
-EventManager.addHandler('onObjectDestroy', objprot_onObjectDestroy)
-EventManager.addHandler('onLoad', objprot_onLoad)
 
 return toReturn

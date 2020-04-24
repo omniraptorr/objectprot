@@ -1,6 +1,5 @@
 -- print("included bbprot")
-#include bagprot
-
+local bagprot = require("objectprot/bagProt")
 --followup: replace harcoded createButton() params in menu funcs with ones generated from default config here. or even xml
 button_bagprot = {
   moduleName = "Button Bag",
@@ -67,45 +66,44 @@ end
 -- global shit goes below this line
 
 
-function quickadd_button_bag(player, obj) -- this hotkey function converts a dumb bag into a memory bag (with 3d buttons), and stores player's currently selected objects in itself.
+local function quickadd_button_bag(player, obj) -- this hotkey function converts a dumb bag into a memory bag (with 3d buttons), and stores player's currently selected objects in itself.
   obj.setGMNotes(button_bagprot.moduleName)
+  bagprot:newInstance(obj)
 end
 addHotkey("quick add button bag", quickadd_button_bag)
 
--- followup: how does scope work for these again? the local bag should be discarded when quickadd goes out of scope, but the buttons keep working. someone please explain
+local buttonbag_instances = require("objectprot/mainProt").instanceList[button_bagprot.moduleName]
 
 function global_start_relative(obj)
-  local bag = bagList[obj.guid]
+  local bag = buttonbag_instances[obj.guid]
   bag.isRelative = true
   bag:Setup()
 end
 function global_start_absolute(obj)
-  local bag = bagList[obj.guid]
+  local bag = buttonbag_instances[obj.guid]
   bag.isRelative = false
   bag:Setup()
 end
 
-function global_Setup(obj)
-  bagList[obj.guid]:Setup(player)
+function global_Setup(obj, player)
+  buttonbag_instances[obj.guid]:Setup(player)
 end
 function global_sendSelected(obj, player)
-  bagList[obj.guid]:sendSelected(player)
+  buttonbag_instances[obj.guid]:sendSelected(player)
 end
 function global_Cancel(obj, player)
-  bagList[obj.guid]:Cancel(player)
+  buttonbag_instances[obj.guid]:Cancel(player)
 end
 function global_Submit(obj, player)
-  bagList[obj.guid]:Submit(player)
+  buttonbag_instances[obj.guid]:Submit(player)
 end
 function global_Reset(obj, player)
-  bagList[obj.guid]:Reset(player)
+  buttonbag_instances[obj.guid]:Reset(player)
 end
-
-
 
 function global_Place(obj, player)
-  bagList[obj.guid]:Place(player)
+  buttonbag_instances[obj.guid]:Place(player)
 end
 function global_Recall(obj, player)
-  bagList[obj.guid]:Recall(player)
+  buttonbag_instances[obj.guid]:Recall(player)
 end
