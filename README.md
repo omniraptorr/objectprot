@@ -1,0 +1,1 @@
+The main function of this library is to provide a thin abstraction over an object and let you control many similar scripted objects of the same type without running duplicate code on each one- all the code stays in Global lua, and you simply call the provided functions to initialize the controls and data storage on each individual object.

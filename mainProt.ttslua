@@ -18,45 +18,17 @@ objectprot.__call = function(sourceTable) -- attempting to call an instance as a
   return obj
 end
 
-local protList = {} -- a table where each element is format protList[protName] = <prot> . this is for lookup during initObject (see globals at the bottom)
-local instanceList = {} -- a table where each element is format instanceList[protName] = {{guid1 =<data>}, guid2 = <data>, ...}
 
-function objectprot:newProt(baseTable, name) -- not sure if i should copy functions into children but i was told metatable lookups are fast.
+function objectprot:new(baseTable, ...) -- initializes a new instance of a class based on target obj and any other arguments. do not call from instance, only from prototype. for reference a prototype must have prot.__index == prot
 
-  local out = baseTable or {} -- baseTable should not be another prot, just a table with some default values.
-
-  if not out.protName then -- check if there is a name already
-    if name then
-      out.protName = name
-    else
-      error("no name provided to function newProt")
-    end
-  end
-
-  local name = out.protName -- moving it from table to local var in case it wasn't there already
-
-  if protList[name] then -- all new prots are added to a single list for later lookup.
-    error("Tried to add duplicate prototype " .. name ..  "!") -- idk if i should add a check for duplicate values/baseTables
-    return
-  else
-    protList[name] = out
-    instanceList[name] = {}
-  end
+  local out = setmetatable(baseTable or {}, self)
   out.__index = out --unfortunately __index needs to be set manually for each new prototype, it's called with rawget() and thus not heritable.
   out.__call = objectprot.__call -- __call() should always be the same so we set it directly to objectprot's to avoid an extra metatable lookup.
   return setmetatable(out, self) -- makes an empty table and sets its metatable to self. the setmetatable function returns its first arg
-end
 
-function objectprot:newInstance(initarg, ...) -- initializes a new instance of a class based on target obj and any other arguments. do not call from instance, only from prototype. for reference a prototype must have prot.__index == prot
-  if not rawget(self, "protName") then
-    log("tried to create an instance, but parent was not a prototype")
-    return
-  end
-  local out = setmetatable({}, self)
   local guid = type(initarg) == "userdata" and initarg.guid or initarg -- initarg is either userdata or a guid string. if it's userdata, get guid, else it should be a string and we can assign directly
   assert(type(guid) == "string", "init argument is not a not valid (userdata or guid), it's a " .. type(initarg))
   out.guid = guid -- every instance needs a guid
-  instanceList[self.protName][guid] = out -- basic assignment. should be low overhead but still followup: on if this is the best pattern.
   return out:init(...) -- any additional args are passed on to init
 end
 
@@ -155,46 +127,6 @@ local function calcButtonWidth(str) -- Get real string length per char table.
     end
     return len
 end
-
-
--- GLOBALS GO HERE
-
-local function getObjectProt(obj)
-  local GMNotes = obj.getGMNotes()
-  return GMNotes:sub(GMNotes:find("^.-\n")) -- prot name is stored in first line of GMNotes.
-end
-
-local function initObject(obj) -- call the constructor and bind to an object
-  local controllerProt = protList[getObjectProt(obj)]
-  if controllerProt then
-    return controllerProt:newInstance(obj)
-  end
-end
-
-local function objprot_onLoad() -- called during onLoad()
-  for i,obj in ipairs(getAllObjects()) do
-    initObject(obj)
-  end
-end
-local function objprot_onObjectSpawn(obj)
-  initObject(obj)
-end
-
-local function objprot_onObjectDestroy(dying_object)
-  local instances = instanceList[getObjectProt(dying_object)] -- check if object has a controller prot
-  if instances then
-    local instance = instances[dying_object.guid] -- check for instance because it may have been cleaned up already.
-    if instance then
-      instance:cleanupInstance()
-    end
-  end
-end
-
-local EventManager = require('ge_tts/EventManager')
-EventManager.addHandler('onObjectSpawn', objprot_onObjectSpawn)
-EventManager.addHandler('onObjectDestroy', objprot_onObjectDestroy)
-EventManager.addHandler('onLoad', objprot_onLoad)
-
 
 return {
   mainProt = objectprot,

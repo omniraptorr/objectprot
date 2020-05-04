@@ -1,0 +1,96 @@
+local protList = {} -- a table where each element is format protList[protName] = <prot> . this is for lookup during initObject (see globals at the bottom)
+local instanceList = {} -- a table where each element is format instanceList[protName] = {{guid1 =<data>}, guid2 = <data>, ...}
+
+local function registerProt(prot, name)
+  if not prot.protName then -- check if there is a name already
+    if name then
+      prot.protName = name
+    else
+      error("no name provided to function registerProt")
+    end
+  end
+
+  local name = out.protName -- moving it from table to local var in case it wasn't there already
+
+  if protList[name] then -- all new prots are added to a single list for later lookup.
+    error("Tried to add duplicate prototype " .. name ..  "!") -- idk if i should add a check for duplicate values/baseTables
+    return
+  else
+    protList[name] = out
+    instanceList[name] = {}
+  end
+end
+
+-- followup: maybe append a json to the regular GMNotes? like, maybe using the pattern "ObjProt Metadata:\n(.*)\n$"
+local function getObjectProt(obj)
+  return obj.getGMNotes():match("^(.+)\n") -- prot name is stored in first line of GMNotes.
+end
+local function getObjectAUID(obj)
+  return obj.getGMNotes():match("\nAUID: (%d+)$")
+end
+
+local AUIDArray = {}
+local exitBagMap = {}
+-- AUID is a dumb integer that is always unique for each object because we set and increment it every time we see an object without one.
+function getAUID(obj)
+  if AUID then
+    return AUID
+  else
+    local newAUID = #AUIDArray + 1
+
+  end
+end
+
+local function initObject(obj) -- call the constructor and bind to an object
+  local controllerProt = protList[getObjectProt(obj)]
+  if controllerProt then
+    return controllerProt:newInstance(obj)
+  end
+end
+
+local function registerInstance(initarg, ...)
+  local instance = prot
+  local instances = instanceList[self.protName]
+  if instances then
+    if instances[guid] then
+      log("overwriting old guid " .. guid .. " in instanceList")
+    end
+    isntances[guid] = out
+  else
+  end
+  instanceList[self.protName][guid] = out -- basic assignment. should be low overhead but still followup: on if this is the best pattern. if you try to assign objects with duplicate guids, tough luck, this will quietly break, so handle that elsewhere
+end
+
+
+local function objprot_onLoad() -- called during onLoad()
+  for i,obj in ipairs(getAllObjects()) do
+    initObject(obj)
+  end
+end
+
+local function objprot_onObjectDestroy(dying_object)
+  local instances = instanceList[getObjectProt(dying_object)] -- check if object has a controller prot
+  if instances then
+    local instance = instances[dying_object.guid] -- check for instance because it may have been cleaned up already.
+    if instance then
+      instance:cleanupInstance()
+    end
+  end
+end
+
+local fromBags = {}
+local function objprot_onObjectLeaveContainer(bag, obj)
+  fromBags[obj] = true
+end
+
+local function objprot_onObjectSpawn(obj)
+  if fromBags[obj] then
+
+  end
+end
+
+
+local EventManager = require('ge_tts/EventManager')
+EventManager.addHandler('onObjectSpawn', objprot_onObjectSpawn)
+EventManager.addHandler('onObjectDestroy', objprot_onObjectDestroy)
+EventManager.addHandler('onLoad', objprot_onLoad)
