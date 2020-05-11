@@ -6,7 +6,7 @@
 -- (integer) container's AUID for objects that have entered containers (since they're not truly deleted)
 -- (string) "destroyed" for objects that have been directly deleted
 
-local newbimap = require "bimap"
+local newbimap = require "bimap/bimap"
 local AUIDs, AUIDs_rev = newbimap()
 
 local function getAUID(obj) -- this one has no side effect
@@ -23,29 +23,39 @@ local function addAUID(obj)
   return newAUID
 end
 
-
-
--- gets and returns AUID, or adds one if it didn't exist yet.
-local function startTracking(obj)
-  return getAUID(obj) or addAUID(obj)
-end
-
--- sets and returns a GUID, overwrites existing AUID if any. used with onObjectSpawn if the object is not spawning from a bag.
+-- sets and returns a GUID, overwrites existing AUID if any. used with onObjectSpawn if the object is not spawning from a container.
 local function forceAddAUID(obj)
   local newAUID = #AUIDs + 1
-  local newAUIDString = "\nAUID: " .. newAUID
+  local newAUID_string = "\nAUID: " .. newAUID
 
   local newGMNote, num_matches = obj.getGMNotes():gsub("\nAUID: %d+$",  newAUIDString)
+  local newGMNote, num_matches = obj.getGMNotes():gsub("\nAUID: %d+$",  newAUID_string)
   if num_matches == 1 then
-    log("replacing AUID of obj with guid:" .. obj.guid .. ", gnote: \n" .. obj.getGMNotes())
     obj.setGMNotes(newGMNote)
   elseif num_matches == 0 then
-    obj.setGMNotes(newGMNote .. newAUIDString)
+    obj.setGMNotes(newGMNote .. newAUID_string)
   else
     error("duplicate AUIDs on object with guid " .. obj.guid ", dumping its GMNote:\n" .. obj.getGMNotes())
   end
-  AUIDS[newAUID] = obj
+  AUIDs[newAUID] = obj
   return newAUID
+end
+
+-- gets and returns AUID, or adds and returns one if it didn't exist yet. in either case, indexes the object in the AUIDs map.
+local function startTracking(obj)
+  local objAUID = getAUID(obj)
+  if objAUID then
+    if not AUIDs[objAUID] then -- simply start tracking the object
+      AUIDs[objAUID] = obj
+    else -- if auid is taken, assign a new one
+      local newAUID = forceAddAUID(obj)
+      log(string.format("duplicate AUID found, reassigning new obj! old auid/guid: %s/%s, new auid: %s",
+      objAUID, AUIDs[objAUID].guid, newAUID))
+      return
+    end
+  else
+    addAUID(obj) -- if no auid yet, add one.
+  end
 end
 
 -- Event Functions:
@@ -66,11 +76,11 @@ local function AUID_onLoad() -- called during onLoad()
   end
 end
 
--- when an pre-existing object leaves a bag, add it to the AUID map (unless that AUID is already taken).
-local function AUID_onObjectLeaveContainer(container, obj)
-  local objAUID = getObjectAUID(obj)
+-- when an pre-existing object leaves a container, add it to the AUID map (unless that AUID is already taken).
+function AUID_onObjectLeaveContainer(container, obj)
+  local objAUID = getAUID(obj)
   if objAUID then
-    if not AUIDS[objAUID] then
+    if not AUIDs[objAUID] then
       AUIDs[objAUID] = obj
     else
       local newAUID = forceAddAUID(obj)
@@ -83,24 +93,24 @@ local function AUID_onObjectLeaveContainer(container, obj)
   end
 end
 
--- if the spawning object was not from a bag, had no AUID, or its AUID was taken, then give it a new AUID
+-- if the spawning object was not from a container, had no AUID, or its AUID was taken, then give it a new AUID
 local function AUID_onObjectSpawn(obj)
-  if not AUIDs_rev[obj] then -- check that the object isn't tracked
+  if not AUIDs_rev[obj] then -- check that the object isn't tracked, but we shouldn't need to
     forceAddAUID(obj)
   end
 end
 
--- when an object goes into a bag, set its AUID to point at the bag's AUID.
-local function AUID_onObjectEnterContainer(bag, obj)
+-- when an object goes into a container, set its AUID to point at the container's AUID.
+local function AUID_onObjectEnterContainer(container, obj)
   local objAUID = AUIDs_rev[obj] and next(AUIDs_rev[obj]) -- first check if table exists, then get first (should be only) element
-  local bagAUID = AUIDs_rev[bag] and next(AUIDs_rev[bag])
-  if not AUIDs_rev[obj] or not AUIDs_rev[bag] then
+  local containerAUID = AUIDs_rev[container] and next(AUIDs_rev[container])
+  if not AUIDs_rev[obj] or not AUIDs_rev[container] then
     log(string.format("untracked object entering container, container guid: %s obj guid: %s",
-    bag.guid, obj.guid))
+    container.guid, obj.guid))
     return
   end
-  if objAUID and bagAUID then
-    AUIDs[objAUID] = bagAUID
+  if objAUID and containerAUID then
+    AUIDs[objAUID] = containerAUID
   end
 end
 
@@ -115,7 +125,7 @@ local function markDestroyed(destroyed_auid)
 end
 
 local function AUID_onObjectDestroy(dying_object)
-  local objAUID = getObjectAUID(dying_object)
+  local objAUID = getAUID(dying_object)
   if not objAUID then
     log("destroyed object had no AUID! guid: " .. obj.guid)
     return
@@ -125,7 +135,7 @@ local function AUID_onObjectDestroy(dying_object)
     log("destroyed object had an AUID but was not tracked! guid: " .. obj.guid)
     return
   end
-  if AUID_entry == AUIDs_rev[dying_object] then -- if it's a number, then obj is in a tracked bag and already accounted for.
+  if AUID_entry == AUIDs_rev[dying_object] then -- if it's a number, then obj is in a tracked container and already accounted for.
     markDestroyed(objAUID)
   else
     log(string.format("AUID entry of destroyed object %s was not an obj reference to itself! instead it was: %s",
@@ -134,7 +144,9 @@ local function AUID_onObjectDestroy(dying_object)
 end
 
 local EventManager = require('ge_tts/EventManager')
-EventManage.addHandler('onObjectLeaveContainer', AUID_onObjectLeaveContainer)
+EventManager.addHandler('onObjectLeaveContainer', AUID_onObjectLeaveContainer)
 EventManager.addHandler('onObjectSpawn', AUID_onObjectSpawn)
 EventManager.addHandler('onObjectDestroy', AUID_onObjectDestroy)
 EventManager.addHandler('onLoad', AUID_onLoad)
+
+return {AUIDs = AUIDs, AUIDs_rev = AUIDs_rev, getAUID = getAUID, startTracking = startTracking}
