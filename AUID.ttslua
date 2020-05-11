@@ -1,4 +1,4 @@
--- an AUID is a dumb integer that is always unique for each object
+-- an AUID (Actually Unique ID) is a dumb integer that is always unique for each object
 -- AUID is set and incremented every time we see an object without one, or each time a new object spawns from scratch.
 
 -- AUIDs are unique keys that are stored in a table. AUIDs are keys that can point at 1 of 3 types of values-
