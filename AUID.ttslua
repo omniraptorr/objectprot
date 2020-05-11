@@ -29,7 +29,6 @@ local function forceAddAUID(obj)
   local newAUID_string = "\nAUID: " .. newAUID
 
   local newGMNote, num_matches = obj.getGMNotes():gsub("\nAUID: %d+$",  newAUIDString)
-  local newGMNote, num_matches = obj.getGMNotes():gsub("\nAUID: %d+$",  newAUID_string)
   if num_matches == 1 then
     obj.setGMNotes(newGMNote)
   elseif num_matches == 0 then
