@@ -1,0 +1,140 @@
+-- an AUID is a dumb integer that is always unique for each object
+-- AUID is set and incremented every time we see an object without one, or each time a new object spawns from scratch.
+
+-- AUIDs are unique keys that are stored in a table. AUIDs are keys that can point at 1 of 3 types of values-
+-- (userdata) associated object reference for existing objects
+-- (integer) container's AUID for objects that have entered containers (since they're not truly deleted)
+-- (string) "destroyed" for objects that have been directly deleted
+
+local newbimap = require "bimap"
+local AUIDs, AUIDs_rev = newbimap()
+
+local function getAUID(obj) -- this one has no side effect
+  local GMNote = obj.getGMNotes()
+  return GMNote and GMNote:match("\nAUID: (%d+)$")
+  -- stupid workaround because TTS object string properties aren't always strings, they can also be nil
+end
+
+-- naively appends AUID to GMNote, as a side effect adds the object to AUIDs. Rarely used.
+local function addAUID(obj)
+  local newAUID = #AUIDs + 1
+  obj.setGMNotes((obj.getGMNotes() or "") .. "\nAUID: " .. newAUID)
+  AUIDs[newAUID] = obj
+  return newAUID
+end
+
+
+
+-- gets and returns AUID, or adds one if it didn't exist yet.
+local function startTracking(obj)
+  return getAUID(obj) or addAUID(obj)
+end
+
+-- sets and returns a GUID, overwrites existing AUID if any. used with onObjectSpawn if the object is not spawning from a bag.
+local function forceAddAUID(obj)
+  local newAUID = #AUIDs + 1
+  local newAUIDString = "\nAUID: " .. newAUID
+
+  local newGMNote, num_matches = obj.getGMNotes():gsub("\nAUID: %d+$",  newAUIDString)
+  if num_matches == 1 then
+    log("replacing AUID of obj with guid:" .. obj.guid .. ", gnote: \n" .. obj.getGMNotes())
+    obj.setGMNotes(newGMNote)
+  elseif num_matches == 0 then
+    obj.setGMNotes(newGMNote .. newAUIDString)
+  else
+    error("duplicate AUIDs on object with guid " .. obj.guid ", dumping its GMNote:\n" .. obj.getGMNotes())
+  end
+  AUIDS[newAUID] = obj
+  return newAUID
+end
+
+-- Event Functions:
+
+local function AUID_onLoad() -- called during onLoad()
+  for i,obj in ipairs(getAllObjects()) do
+    local objAUID = getAUID(obj)
+    if objAUID then
+      if not AUIDs[objAUID] then
+        AUIDs[objAUID] = obj
+      else
+        log(string.format("duplicate object with AUID %s found! guids (old and new): %s and %s",
+        objAUID, obj.guid, AUIDs[objAUID].guid))
+      end
+    else
+      addAUID(obj)
+    end
+  end
+end
+
+-- when an pre-existing object leaves a bag, add it to the AUID map (unless that AUID is already taken).
+local function AUID_onObjectLeaveContainer(container, obj)
+  local objAUID = getObjectAUID(obj)
+  if objAUID then
+    if not AUIDS[objAUID] then
+      AUIDs[objAUID] = obj
+    else
+      local newAUID = forceAddAUID(obj)
+      log(string.format("duplicate AUID found, reassigning new obj! old auid/guid: %s/%s, new auid: %s",
+      objAUID, AUIDs[objAUID].guid, newAUID))
+      return
+    end
+  else
+    addAUID(obj)
+  end
+end
+
+-- if the spawning object was not from a bag, had no AUID, or its AUID was taken, then give it a new AUID
+local function AUID_onObjectSpawn(obj)
+  if not AUIDs_rev[obj] then -- check that the object isn't tracked
+    forceAddAUID(obj)
+  end
+end
+
+-- when an object goes into a bag, set its AUID to point at the bag's AUID.
+local function AUID_onObjectEnterContainer(bag, obj)
+  local objAUID = AUIDs_rev[obj] and next(AUIDs_rev[obj]) -- first check if table exists, then get first (should be only) element
+  local bagAUID = AUIDs_rev[bag] and next(AUIDs_rev[bag])
+  if not AUIDs_rev[obj] or not AUIDs_rev[bag] then
+    log(string.format("untracked object entering container, container guid: %s obj guid: %s",
+    bag.guid, obj.guid))
+    return
+  end
+  if objAUID and bagAUID then
+    AUIDs[objAUID] = bagAUID
+  end
+end
+
+local function markDestroyed(destroyed_auid)
+  local contents = AUIDs_rev[destroyed_auid] -- the set of things that list destroyed obj as their container
+  if contents then
+    for key in pairs(contents) do
+      markDestroyed(key) -- could cause issues with more than 65535 objects? followup on performance
+    end
+  end
+  AUIDs[destroyed_auid] = "destroyed"
+end
+
+local function AUID_onObjectDestroy(dying_object)
+  local objAUID = getObjectAUID(dying_object)
+  if not objAUID then
+    log("destroyed object had no AUID! guid: " .. obj.guid)
+    return
+  end
+  local AUID_entry = AUIDs[objAUID]
+  if not AUID_entry then
+    log("destroyed object had an AUID but was not tracked! guid: " .. obj.guid)
+    return
+  end
+  if AUID_entry == AUIDs_rev[dying_object] then -- if it's a number, then obj is in a tracked bag and already accounted for.
+    markDestroyed(objAUID)
+  else
+    log(string.format("AUID entry of destroyed object %s was not an obj reference to itself! instead it was: %s",
+    objAUID, logString(AUID_entry)))
+  end
+end
+
+local EventManager = require('ge_tts/EventManager')
+EventManage.addHandler('onObjectLeaveContainer', AUID_onObjectLeaveContainer)
+EventManager.addHandler('onObjectSpawn', AUID_onObjectSpawn)
+EventManager.addHandler('onObjectDestroy', AUID_onObjectDestroy)
+EventManager.addHandler('onLoad', AUID_onLoad)
