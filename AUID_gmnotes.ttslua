@@ -5,76 +5,92 @@
 -- (userdata) associated object reference for existing objects
 -- (integer) container's AUID for objects that have entered containers (since they're not truly deleted)
 -- (string) "destroyed" for objects that have been directly deleted
-local function logformat(str, ...)
-  local args = table.pack(...)
-  for i = 1, args.n do
-    args[i] = tostring(args[i])
-  end
-  log(string.format(str, table.unpack(args)))
-end
-
 
 local newbimap = require "bimap/bimap"
 local AUIDs, AUIDs_rev = newbimap()
 
--- returns the object's auid. assumes script_state has a top-level table.
-local function getAUID(obj)
-  local script_state = JSON.decode(obj.script_state)
-  return type(script_state) == "table" and script_state.AUID or nil
+local function getAUID(obj) -- this one has no side effect
+  local GMNote = obj.getGMNotes()
+  return GMNote and GMNote:match("\nAUID: (%d+)$")
   -- stupid workaround because TTS object string properties aren't always strings, they can also be nil
+end
+
+-- naively appends AUID to GMNote, as a side effect adds the object to AUIDs. Rarely used.
+local function addAUID(obj)
+  local newAUID = #AUIDs + 1
+  obj.setGMNotes((obj.getGMNotes() or "") .. "\nAUID: " .. newAUID)
+  AUIDs[newAUID] = obj
+  return newAUID
 end
 
 -- sets and returns a GUID, overwrites existing AUID if any. used with onObjectSpawn if the object is not spawning from a container.
 local function forceAddAUID(obj)
   local newAUID = #AUIDs + 1
-  local script_state = JSON.decode(obj.script_state)
-  if type(script_state) ~= "table" then
-    script_state = {} -- if you were storing a non-table in script_state, tough luck
-  end
+  local newAUID_string = "\nAUID: " .. newAUID
 
-  script_state.AUID = newAUID
-  obj.script_state = JSON.encode(script_state)
+  local newGMNote, num_matches = obj.getGMNotes():gsub("\nAUID: %d+$",  newAUIDString)
+  if num_matches == 1 then
+    obj.setGMNotes(newGMNote)
+  elseif num_matches == 0 then
+    obj.setGMNotes(newGMNote .. newAUID_string)
+  else
+    error("duplicate AUIDs on object with guid " .. obj.guid ", dumping its GMNote:\n" .. obj.getGMNotes())
+  end
   AUIDs[newAUID] = obj
   return newAUID
 end
 
 -- gets and returns AUID, or adds and returns one if it didn't exist yet. in either case, indexes the object in the AUIDs map.
 local function startTracking(obj)
-  local newAUID = #AUIDs + 1
-  local script_state = JSON.decode(obj.script_state)
-  if type(script_state) ~= "table" then
-    script_state = {} -- if you were storing a non-table in script_state, tough luck
-  end
-
-  local objAUID = state.AUID
+  local objAUID = getAUID(obj)
   if objAUID then
-    if not AUIDs[objAUID] then -- if auid slot is free, simply start tracking the object
+    if not AUIDs[objAUID] then -- simply start tracking the object
       AUIDs[objAUID] = obj
       return objAUID
-    else --else log a warning and move on
-      logformat("duplicate AUID found, reassigning new obj! old guid/auid: %s/%s, new auid: %s",
-      AUIDs[objAUID].guid, objAUID, newAUID)
+    else -- if auid is taken, assign a new one
+      local newAUID = forceAddAUID(obj)
+      log(string.format("duplicate AUID found, reassigning new obj! old auid/guid: %s/%s, new auid: %s",
+      objAUID, AUIDs[objAUID].guid, newAUID))
+      return newAUID
     end
+  else
+    return addAUID(obj) -- if no auid yet, add one.
   end
-
-  -- assign a new one if no AUID yet, or old one is taken
-  script_state.AUID = newAUID
-  obj.script_state = JSON.encode(script_state)
-  AUIDs[newAUID] = obj
-  return newAUID
 end
 
 -- Event Functions:
 
 local function AUID_onLoad() -- called during onLoad()
   for i,obj in ipairs(getAllObjects()) do
-    startTracking(obj)
+    local objAUID = getAUID(obj)
+    if objAUID then
+      if not AUIDs[objAUID] then
+        AUIDs[objAUID] = obj
+      else
+        log(string.format("duplicate object with AUID %s found! guids (old and new): %s and %s",
+        objAUID, obj.guid, AUIDs[objAUID].guid))
+      end
+    else
+      addAUID(obj)
+    end
   end
 end
 
 -- when an pre-existing object leaves a container, add it to the AUID map (unless that AUID is already taken).
 function AUID_onObjectLeaveContainer(container, obj)
-  startTracking(obj)
+  local objAUID = getAUID(obj)
+  if objAUID then
+    if not AUIDs[objAUID] then
+      AUIDs[objAUID] = obj
+    else
+      local newAUID = forceAddAUID(obj)
+      log(string.format("duplicate AUID found, reassigning new obj! old auid/guid: %s/%s, new auid: %s",
+      objAUID, AUIDs[objAUID].guid, newAUID))
+      return
+    end
+  else
+    addAUID(obj)
+  end
 end
 
 -- if the spawning object was not from a container, had no AUID, or its AUID was taken, then give it a new AUID
@@ -88,9 +104,9 @@ end
 local function AUID_onObjectEnterContainer(container, obj)
   local objAUID = AUIDs_rev[obj] and next(AUIDs_rev[obj]) -- first check if table exists, then get first (should be only) element
   local containerAUID = AUIDs_rev[container] and next(AUIDs_rev[container])
-  if not containerAUID or not objAUID then
-    logformat("untracked object with AUID %s entering container with AUID %s, object guid: %s container guid: %s",
-    objAUID, containerAUID, obj.guid, container.guid)
+  if not AUIDs_rev[obj] or not AUIDs_rev[container] then
+    log(string.format("untracked object entering container, container guid: %s obj guid: %s",
+    container.guid, obj.guid))
     return
   end
   if objAUID and containerAUID then
@@ -116,15 +132,14 @@ local function AUID_onObjectDestroy(dying_object)
   end
   local AUID_entry = AUIDs[objAUID]
   if not AUID_entry then
-    logformat("destroyed object had AUID %s but was not tracked! guid: %s",
-    objAUID, obj.guid)
+    log("destroyed object had an AUID but was not tracked! guid: " .. obj.guid)
     return
   end
-  if type(AUID_entry) == "userdata" then -- if it's a number and not a ref, then obj is in a tracked container and already accounted for.
+  if AUID_entry == AUIDs_rev[dying_object] then -- if it's a number, then obj is in a tracked container and already accounted for.
     markDestroyed(objAUID)
   else
-    logformat("AUID entry of destroyed object %s was not an obj reference to itself! instead it was: %s",
-    objAUID, logString(AUID_entry))
+    log(string.format("AUID entry of destroyed object %s was not an obj reference to itself! instead it was: %s",
+    objAUID, logString(AUID_entry)))
   end
 end
 
